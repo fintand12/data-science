@@ -1,6 +1,7 @@
 # Exploring Quantitative Finance & Machine Learning
 
 ## This personal repository reflects my curiosity and self-driven learning in quantitative finance, statistical modeling, and machine learning. It contains projects I’ve built to deepen my understanding of financial markets, develop practical coding skills, and experiment with supervised learning techniques.
+#### I also wanted to improve my python skills. In college, we almost exclusively use R, so while I had a lot of the theory (stats and maths), I needed to brush up and improve my python for a lot of these scripts.
 
 ### What’s inside:
 
