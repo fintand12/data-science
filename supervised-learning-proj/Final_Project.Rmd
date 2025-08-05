@@ -1,0 +1,553 @@
+---
+title: "Classifying Workers on Socioeconomic and Finacial Indicators: A Supervised Machine Learning Approach"
+author: "Fintan Dignam"
+output:
+    html_document:
+      toc: true
+      toc_float: true
+      code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+```
+
+## Introduction
+
+### Objective and Motivation
+
+The goal of this project is to build predictive models that can classify working individuals as either white-collar or blue-collar based on their financial and demographic characteristics, using data from the 2007 U.S. Survey of Consumer Finances (SCF). We’ll test different machine learning methods, like logistic regression, regularised regression, and random forests, to see how well these models can distinguish between the two occupational categories using the survey data.
+
+My inspiration for this project comes from my parents. My dad spent most of his career as a carpenter (a blue-collar job), while my mom worked as an accountant (a white-collar role). Growing up, the differences in their work environments, schedules, and financial experiences were impossible to miss. It made me curious; could financial data alone reveal meaningful distinctions between these two broad job categories? And if so, what patterns might emerge?
+
+### Defining White and Blue Collar
+
+The terms white-collar and blue-collar describe broad categories of employment types. White collar typically involve office-based, managerial, or professional roles that often require formal education or training. The term white collar stemming from wearing a white button down shirt in work. Examples include teachers, engineers, and finance professionals. Blue collar is typically associated with manual labor, skilled trades, or industrial work.Examples being construction workers, factory operators, and mechanics.
+
+In the SCF dataset, we identify white collar workers as those with occupation levels 2 (Managerial), 3 (Technical/Sales/Admin Support), or 4 (Service). Blue collar workers include those coded as levels 5 (Farming/Forestry/Fishing), 6 (Precision Production/Craft), or 7 (Operators/Laborers). Level 1 respondents (those not currently working) are excluded from this analysis.
+
+### Behind the Data
+
+As mentioned, the data used in this project comes from the 2007 wave of the Survey of Consumer Finances (SCF), which is conducted by the Board of Governors of the Federal Reserve System in cooperation with the Department of the Treasury. This comprehensive survey collects detailed financial and demographic information from a nationally representative sample of U.S. households.
+
+The data used has been taken from; Hennig, C. and Liao, T.F. (2013), reference - ‘How to find an appropriate clustering for mixed-type variables with application to socio-economic stratification’, Journal of the Royal Statistical Society Series C: Applied Statistics, 62(3), pp. 309–369. <doi:10.1111/j.1467-9876.2012.01066.x>. and can be accessed at <https://www.blackwellpublishing.com/rss>
+
+The data was accessed and preprocessed following the documentation outlined in the above article.
+
+### Project Framework
+
+This project applies supervised machine learning, specifically a binary classification task, to determine whether an individual is a white collar or blue collar worker based on their financial and demographic characteristics.
+
+Here's how we'll approach it:
+
+1.  Preprocessing & Splitting - Filter the dataset to include only respondents currently working for pay.
+
+2.  Split the data into training and testing sets using stratified sampling (to keep the proportion of white-collar and blue-collar workers balanced).
+
+3.  Use 5-fold cross-validation on the training set to tune and evaluate the models.
+
+4.  Model Selection & Training -
+
+    -   Logistic Regression: A simple linear model to set a baseline performance.
+
+    -   Regularisation Regression: Lasso, Ridge and Elastic Net
+
+    -   Random Forest: A more flexible, tree-based model that can capture complex patterns and provide feature rankings by importance
+
+5.  Evaluation & Comparison - Model performance is then evaluated using several classification metrics, including accuracy, confusion matrices, and ROC AUC scores.
+
+Visualisation tools are used throughout to assess model fit and interpret results. The ultimate goal is to identify how effectively each method can distinguish between white and blue-collar workers using only observable survey data.
+
+Finally, before finishing our introduction, let's load the packages we will be using throughout.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+# Load packages
+library(dplyr)
+library(janitor)
+library(tidymodels)
+library(tidyverse)
+library(corrplot)
+library(ranger)
+library(naniar)
+library(kableExtra)
+library(vip)
+library(yardstick)
+
+#install.packages("kableExtra")
+
+
+
+```
+
+## Exploratory Data Analysis
+
+AS per IBM, "The main purpose of EDA is to help look at data before making any assumptions. It can help identify obvious errors, as well as better understand patterns within the data, detect outliers or anomalous events, find interesting relations among the variables." So let's get into it.
+
+### Data Loading
+
+We begin by loading the dataset and performing initial cleaning of variable names for consistency.
+
+```{r}
+#load data
+survey_data <- read.csv("SCF07.csv") 
+
+#cleaning predictor names
+survey_data <- clean_names(survey_data)
+```
+
+### Data Tidying
+
+Before conducting our analysis, we performed several data cleaning and transformation steps to prepare the dataset for exploration and modeling. These steps included filtering relevant observations, creating new categorical variables, and recoding existing ones for better interpretability.
+
+First, we addressed the occupation variable (`occ`). Since `occ` = 1 represents unemployed individuals who fall outside our scope of comparing white-collar and blue-collar workers, we filtered these observations out. We then created a new `occ_group` variable that classifies respondents into two distinct categories:
+
+-   White-collar workers (occupation = 2-4)
+
+-   Blue-collar workers (occupation = 5-7)
+
+```{r}
+
+survey_data <- survey_data %>%
+  filter(occ >= 2 & occ <= 7) %>%
+  mutate(
+    occ_group = case_when(
+      occ %in% 2:4 ~ "white_collar",
+      occ %in% 5:7 ~ "blue_collar"
+    ),
+    occ_group = factor(occ_group, levels = c("white_collar", "blue_collar"))
+  )
+
+```
+
+Next, we improved the interpretability of our outcome variable by recoding the binary `life` variable from numeric codes (1/2) to meaningful character labels ("Yes"/"No"). We also converted the `hous` variable to a factor to ensure it would be treated as categorical rather than numeric in our analyses.
+
+```{r}
+survey_data <- survey_data %>%
+  mutate(
+    life = factor(life, levels = c(1,2), labels = c("Yes","No")),
+    hous = factor(hous)  
+  )
+```
+
+### Missing Data
+
+Our dataset contains no missing values! (I know, boring, but convenient).
+
+```{r}
+survey_data %>%
+  vis_miss()
+```
+
+
+### Dataset Overview
+
+We now present an overview of the cleaned dataset. This includes its dimensions and a scrollable preview of a sample of rows.
+
+```{r}
+dim(survey_data)
+```
+
+```{r}
+survey_data %>% 
+  kable() %>% 
+  kable_styling(full_width = F) %>% 
+  scroll_box(width = "100%", height = "200px")
+```
+
+
+### Predictor Description
+
+Let's know look at what each of these predictors represent;
+
+`lsam` (Log Savings Amount): Natural logarithm of total savings plus 50. The transformation normalises the distribution and mitigates extreme values.
+
+`linc` (Log Income): Natural logarithm of 2006 total income plus 50, addressing right-skewness.
+
+`educ` (Education): Years of education (0-17), treated as ordinal where 17 indicates graduate-level education.
+
+`cacc` (Checking Accounts): Number of accounts (0, 1, 2, 3, 4-5, 6+), an ordinal measure of financial access.
+
+`sacc` (Savings Accounts): Similar to cacc, but for savings accounts.
+
+`hous` (Housing Type): Nominal variable with nine categories (1 = neither owns nor rents, 2 = not applicable, 3 = owns or is buying, 4 = pays rent, 5 = condominium, 6 = cooperative, 7 = townhouse association, 8 = lifetime tenancy in retirement facility, 9 = owns part of property.). Treated as categorical.
+
+`life` (Life Insurance): Binary factor (“Yes” or “No”).
+
+`occ` (Occupation Class): Although not a predictor, this variable is the target used to classify individuals as white collar or blue collar. Originally includes seven occupational classes, but only levels 2–7 are used. Levels 2–4 are labeled "white collar," and levels 5–7 are labeled "blue collar." Non-working individuals (level 1) are excluded.
+
+`occ_group` (Occupation Group): Target variable. Binary factor: white-collar vs. blue-collar.
+
+
+## Visual EDA
+
+We now move onto the visualisation of our exploratory data analysis. This helps us explore class balances, relationships between predictors and outcomes, collinearity and potential anomalies. These insights will help us guide our modeling strategy.
+
+```{r}
+survey_data %>%
+  ggplot(aes(x = occ_group)) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.3) +
+  theme_minimal() +
+  labs(title = "White vs Blue Collar Counts", x = "Occupation Group", y = "Count")
+
+```
+
+The above bar chart clearly shows a significant class imbalance: there are 3,745 blue-collar workers compared to only 1,197 white-collar workers. This imbalance is crucial because classification models trained on imbalanced data may become biased toward predicting the majority class (in this case, blue-collar). To address this, we will implement stratified sampling later in the data-splitting process to ensure that both classes are proportionally represented in training and testing sets. 
+
+
+```{r}
+survey_data %>%
+  select(lsam, linc, educ, cacc, sacc) %>%
+  cor() %>%
+  corrplot(type = "lower", method = "color", tl.cex = 0.8)
+
+```
+
+Next, we use a correlation matrix to have a look at the relationship between our continuous predictors. We note a strong positive relationship between `lsam` & `sacc`, which makes intuitive sense - the more one saves the more savings accounts they would have. `educ` & `linc` are moderately correlated, along with `linc` & `cacc` and `linc` & `lsam`. 
+
+We note this collinearity between `sacc` and `lsam`. While ensemble methods such as random forests are generally robust to multicollinearity, linear models like logistic regression may be more sensitive to it. Regularised regression techniques are designed to mitigate the effects of correlated predictors.
+
+We'll now take a deeper dive into these predictors and their relation to `occ_group`.
+
+### Log Income
+
+```{r}
+survey_data %>%
+  ggplot(aes(x = occ_group, y = linc, fill = occ_group)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Log Income by Occupation Group",
+       x = "Occupation Group", y = "Log Income") +
+  theme(legend.position = "none")
+
+```
+
+The boxplot, surprisingly, shows that blue-collar workers have higher log-transformed income than white-collar. Because boxplots show distributions rather than counts, the imbalance impact is likely minimal. 
+
+### Log Savings
+
+```{r}
+survey_data %>%
+  ggplot(aes(x = lsam, fill = occ_group)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 30) +
+  labs(title = "Log Savings Distribution by Occupation Group",
+       x = "Log Savings", y = "Count") +
+  theme_minimal()
+```
+
+This histogram shows that a large proportion of both white and blue-collar workers have low log savings values, with a spike among blue-collar. Beyond this initial peak, white-collar savings tend to be more evenly distributed, though only blue-collar appear at higher levels. 
+
+### Life Insurance
+
+```{r}
+survey_data %>%
+  ggplot(aes(x = occ_group, fill = life)) +
+  geom_bar(position = "fill") +
+  theme_minimal() +
+  labs(title = "Proportion of Life Insurance Coverage by Occupation Group",
+       y = "Proportion", x = "Occupation Group", fill = "Has Life Insurance")
+
+```
+
+This plot suggests that a higher proportion of blue-collar workers have life insurance coverage compared to white-collar workers. This may indicate greater financial caution among blue-collar, or some sort of employment benefit assocciated with blue-collar work. 
+
+
+### Housing Type
+
+```{r}
+survey_data %>%
+  ggplot(aes(x = hous, fill = occ_group)) +
+  geom_bar(position = "fill") +
+  labs(title = "Housing Type by Occupation Group",
+       x = "Housing Type", y = "Proportion") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+This plot shows that no white-collar workers fall in the 7-9 house categories (see predictor descriptions for codings), and are dominated in all other types of housing except 2 and 4. This is likely highly influenced by the class imbalance, and/or a lack of white collar respondents. 
+
+### Checking Accounts
+
+```{r}
+survey_data %>%
+  ggplot(aes(x = as.factor(cacc), fill = occ_group)) +
+  geom_bar(position = "fill") +
+  labs(title = "Checking Accounts by Occupation Group",
+       x = "Number of Checking Accounts", y = "Proportion") +
+  theme_minimal()
+
+```
+
+Almost systematically, the proportion of white-collar workers number of checking accounts decreases as the number of checking accounts increases. This is likely highly influenced by the class imbalance, and/or a lack of white collar respondents. 
+
+
+
+To conclude our EDA section; it has revealed several patterns and considerations which inform our modeling approach. Notably, a strong correlation exists between `sacc` and `lsam`, which may pose issues for models sensitive to multicollinearity, such as logistic regression. Regularised regression techniques like ridge and lasso are expected to handle this more effectively, as well as random forests. We also observed substantial class imbalance between white and blue-collar, which we plan to address through stratified sampling during data splitting. These insights directly influenced how we constructed our modeling recipe.
+
+
+## Model Building
+
+With our EDA done, we move onto the fun stuff now. In this section, we start building our models. First, we have some things to setup.
+
+### Data Split into Training and Testing
+
+```{r}
+set.seed(123)
+
+
+data_split <- initial_split(survey_data, prop = 0.75, strata = occ_group)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+
+We use a 75/25 train-test split to ensure enough data is available for training models while still preserving enough for the test set.. Stratifying by `occ_group` helps maintain the original class proportions in both sets, which is important given the observed class imbalance.
+
+We note the size of our training and test sets below.
+
+```{r}
+dim(train_data)
+dim(test_data)
+```
+
+Training set count; `3705`
+Test set count `1237`
+
+### Recipe
+
+
+The recipe includes all relevant predictors identified during our EDA and applies two key steps. Categorical predictors such as `hous` and `life` are dummy-coded. Then numeric predictors are standardised to ensure variables are all on the same scale and contribute equally.
+
+```{r}
+
+scf_recipe <- recipe(occ_group ~ lsam + linc + educ + cacc + sacc + hous + life, data = train_data) %>%
+  step_dummy(all_nominal_predictors()) %>%     
+  step_normalize(all_numeric_predictors())     
+
+```
+
+Note; All models were fit using the same recipe, which included both sacc and lsam, despite their correlation. This was done to maintain consistency across model comparisons and to test the regularisation capabilities of Ridge, Lasso, and Elastic Net. Logistic regression served as a baseline, allowing us to assess the added value of penalisation in the presence of potential multicollinearity.
+
+### K-Fold Cross Validation
+
+To assess model performance more reliably, we'll use 10-fold cross-validation. The model is trained on k−1 (k being 10 in our scenario) folds and tested on the remaining fold, repeating this process k times so that every observation is used for both training and testing. It provides a more reliable estimate of model performance than a single train/test split by reducing variance and helping detect overfitting. Cross-validation was performed only on the training set, to avoid data leakage.
+
+```{r}
+folds <- vfold_cv(train_data, v = 10, strata = occ_group)
+```
+
+
+### Model Building Process
+
+All modeling work was conducted in a separate .R script (which is attached) to reduce compile time and avoid rerunning models during knitting. Each model was run once, and the key results were saved to .rda files. These results are later loaded into the R Markdown file for evaluation and comparison.
+
+1.  Model specification:For each model, we first define the model type using parsnip syntax. This involves specifying the model function, assigning the appropriate engine, and setting the mode to "classification", as our goal is to predict binary occupational class.
+2.  Workflow setup: We then build a workflow() object for each model. This combines the standardised recipe defined earlier with the model specification, ensuring that all models are trained using the same preprocessing steps and predictor set.
+
+We skip the rest of the tuning steps for logistic regression, as it does not require hyperparameter tuning.
+
+3.  Tuning and fitting: we use tune_grid() with a specified hyperparameter grid across the 10-fold cross-validation folds.
+
+4.  Model selection: After tuning, we identify the best-performing hyperparameter configuration based on ROC AUC.
+
+5.  Fit: this model is fit with our workflow to our test set.
+
+## Model Results
+
+Firstly, lets load in the results obtained from our models.
+
+```{r}
+load("logistic_regression_model.rda")
+load("ridge_model_results.rda")
+load("lasso_model_results.rda")
+load("elastic_net_model_results.rda")
+load("random_forest_model.rda")
+```
+
+### Visualisation
+
+To effectively compare models and understand how tuning influenced performance, we use visualizations focused on the ROC AUC metric. For logistic regression, we present the ROC curve to assess the model's classification ability. For the regularised models (Ridge, Lasso, and Elastic Net), we display tuning plots to examine how changes in hyperparameters affected ROC AUC, offering insight into model sensitivity and optimal settings. Similarly, for the random forest, we visualize the effect of tuning key parameters to evaluate how model complexity impacts performance.
+
+### Logistic Regression
+
+```{r}
+log_roc_plot_train
+
+```
+
+The ROC curve for the logistic regression model shows a decently strong performance, with the curve pushed well above the diagonal line (the line representing a model that classifies randomly). This indicates that the model has a good ability to distinguish between the two classes.
+
+### Regularised Regression
+
+#### Ridge
+
+```{r}
+ridge_tune_plot
+
+
+```
+
+This autoplot shows how the ROC AUC score decreases with increasing regularisation, which in the Ridge model means increasing $\lambda$, or the penalty. The graph shows us that overly penalising the coefficients can reduce accuracy. It suggests that a smaller $\lambda$ is better.
+
+
+
+
+
+
+
+
+
+
+#### Lasso
+
+```{r}
+lasso_tune_plot
+
+
+```
+
+This autoplot shows how the ROC AUC score changes with increasing regularisation in the Lasso model, where again, greater regularisation means a higher value of $\lambda$. We observe a steep drop in performance around $\lambda$ = 0.2, after which the ROC AUC collapses to near 0.5 (random guessing level). This suggests that at higher regularisation levels, Lasso eliminates too many predictors by shrinking their coefficients to zero, severely hurting model accuracy. This makes sense considering there's only a small number of predictors. A smaller $\lambda$ is clearly preferable here to retain predictive performance.
+
+#### Elastic Net
+
+```{r}
+elastic_tune_plot
+
+
+```
+
+In this plot, each curve represents a different mixture value, where values closer to 1 lean toward Lasso and those closer to 0 lean toward Ridge. We can see that models with a high Lasso component, like red and purple curves, experience sharp drops in performance as regularisation increases, similar to pure Lasso, due to feature elimination. In contrast, models with more Ridge influence, orange and mustard curves, maintain more stable and higher ROC AUC values even at higher regularisation levels.
+
+#### Random Forest
+
+```{r}
+rf_tuning_plot
+
+```
+
+This tuning plot for the Random Forest model shows ROC AUC scores across different combinations of hyperparameters: number of trees, number of randomly selected predictors and minimal node size. Across all graphs, we see that increasing the number of randomly selected predictors from 1 to 4 significantly improves model performance. The number of trees has a relatively minor effect, with performance stabilising above across all # Trees. Similarly, changing the minimal node size from 10 to 20 has little impact on AUC. These results suggest the model is robust to the number of trees and node size but particularly sensitive to the number of predictors used at each split.
+
+
+### Accuracy
+
+To summarize the best ROC AUC values from our models, we create a tibble and compare the final ROC AUC values produced from the training set of each model.
+
+```{r}
+
+training_roc_results <- tibble(
+  Model = c("Logistic Regression", "Ridge", "Lasso", "Elastic Net", "Random Forest"),
+  Training_ROC_AUC = c(
+    log_roc_auc_train$.estimate,
+    ridge_roc_auc_train$.estimate,
+    lasso_roc_auc_train$.estimate,
+    elastic_roc_auc_train$.estimate,
+    rf_roc_auc_train$.estimate
+  )
+)
+
+# Sort by performance
+training_roc_results %>% 
+  arrange(desc(Training_ROC_AUC))
+```
+
+From the table, it is clear that the Random Forest model significantly outperforms the others in terms of training ROC AUC. This indicates that it has the strongest ability to classify the white and blue collar workers in the training data. Speciffically, a ROC AUC of 0.993 means it can almost perfectly distinguish between the 2 groups.
+
+
+
+## Results From Our Best Model
+
+So random forest was our best model, but lets take a deeper dive into its specific parameters that achived this ROC AUC.
+
+### The Model
+
+```{r}
+show_best(rf_tuned, metric = "roc_auc") %>%
+  select(-.estimator, .config) %>%
+  slice(1)
+
+```
+
+So, this output tells us that the best-performing combination of hyperparameters for our Random Forest model is with `mtry` = 7, `trees` = 500, and `min_n` = 10. But what does that mean?
+
+-   `mtry` = means that every time the model made a split in a decision tree, it randomly picked 7 different predictors to consider. A higher `mtry` allows the model to explore more variables at each decision point.
+-   `trees` = 500 indicates that the forest was composed of 500 individual decision trees. Using more trees means the model gets more reliable predictions than any single tree could give on its own.
+-   `min_n` = 10 sets the minimum number of observations a node must have before a split is attempted. A smaller value like 10 allows the model to capture finer patterns in the data.
+
+
+
+### Final ROC Results
+
+Importantly, we evaluate our model on the test, which is an entirely unseen dataset for this model.
+
+```{r}
+set.seed(123)
+
+rf_final_wflow <- finalize_workflow(rf_wflow, rf_best)
+
+rf_final_fit_test <- fit(final_rf_model, data = test_data)
+
+rf_roc_auc_test <- augment(rf_final_fit_test, new_data = test_data, type = "prob") %>%
+  roc_auc(truth = occ_group, .pred_white_collar) %>%
+  select(.estimate)
+
+rf_roc_auc_test
+```
+
+This ROC AUC score of 0.989 was obtained, showing that the model can almost perfectly classify white and blue-collar workers based on their SCF survey responses. The model is extremely effective at grouping individuals correctly into the two occupational groups, which is what we set out to achieve!!
+
+### ROC Curve
+
+We plot the ROC curve to visualise our this AUC curve we achieved.
+
+```{r}
+rf_roc_curve_test <- augment(rf_final_fit_test, new_data = test_data, type = "prob") %>%
+  roc_curve(truth = occ_group, .pred_white_collar) %>%
+  autoplot()
+
+rf_roc_curve_test
+
+```
+
+As we can see, the curve its arched out close to the top left corner of the grid, which is exactly what we want. This top left area represents high true positive rates and low false positive rates, meaning the model is correctly identifying most white and blue-collar workers while making few mistakes.
+
+### Confusion Matrix
+
+The confusion matrix provides a detailed view of our model’s classification results by showing the exact number of correct and incorrect predictions for each class.
+
+```{r}
+rf_aug_test <- augment(rf_final_fit_test, new_data = test_data, type = "prob")
+
+conf_mat(rf_aug_test, truth = occ_group, estimate = .pred_class) %>%
+  autoplot(type = "heatmap")
+  
+```
+
+Here, we can see that the model correctly identified 249 white-collar and 921 blue-collar workers, with only a small number of misclassifications. This visual helps confirm that the model is not just achieving a high ROC AUC by chance but that it's making accurate predictions across both classes.
+
+### VIP Plot
+
+```{r}
+rf_final_fit_test %>%
+  extract_fit_parsnip() %>%
+  vip() +
+  theme_minimal()
+```
+
+
+Finally, we look at the variable importance plot, which shows which predictors contributed most to the Random Forest model’s classification decisions. We see that `linc` is the most important variable, followed by  educ` and `lsam`. This confirms our earlier findings from the exploratory data analysis, where income stood out as a key factor in classing our workers. I would say this is rather unsurprising that these 3 predictors are at the top. Income is arguably the most important thing when it comes to work, and is usually a huge factor in classifying workers, after all, earnings directly reflect job type and skill level. Education often determines career opportunities and earning potential, so it’s no shock it’s a key player here. Savings almost links these two together, as since financial habits are closely linked to both income and education.
+
+
+
+## Conclusion
+
+In this project, we set out to classify individuals as either white-collar or blue-collar workers using socioeconomic and financial indicators from the SCF07 dataset. After preprocessing the data and conducting exploratory analysis, we implemented and evaluated a range of classification models, including logistic regression, regularised regressions (Ridge, Lasso, Elastic Net), and Random Forests.
+
+Among these, the Random Forest model emerged as the most effective, getting a ROC AUC of 0.989 on the test set, indicating near-perfect classification ability. This was further supported by a strong confusion matrix and a variable importance plot that aligned well with our initial EDA insights—particularly the dominant role of income (`linc`) as a predictor of occupational class. 
+
+Our other models, while performing well, (generally, ROC AUC > 0.8 is considered a good performance), they failed to match the Random Forest's ability to handle variable interactions and nonlinearities. Surprisingly, even with the collinearity of `sacc` and `lsam` left in our recipe, logistic regression performed as well as the regularised regressions, indicating the regularisation did not provide an advantage in this case.
+
+Overall, the results confirm that socioeconomic indicators—especially income, education, and savings—can be powerful predictors of occupational class. 
+
+Future work could explore using additional features, like geographical location, specfic roll within the job, type (if any) of college degree and more.
