@@ -1,0 +1,486 @@
+---
+title: "Report-MAE"
+author: "Dignam"
+date: "2024-11-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+```
+
+Alessio Code
+
+```{r}
+convert_frequency = function(freq){
+  Freq_string = c("Daily", "Hourly", "Monthly", "Quarterly", "Weekly", "Yearly")
+  Freq_number = c(7, 24, 12, 4, 52, 1)
+  ind  = which(freq == Freq_string)
+  return(Freq_number[ind])
+}
+
+frequencyfile <- paste("./train/frequency.csv")#time series frequencies
+aheadfile <- paste("./train/ahead.csv")#time series frequencies
+name <- paste("./train/train_",1,".csv",sep="")#time series train1.csv
+
+y<- as.matrix(read.csv(name))#load data
+frequency<- as.matrix(read.csv(frequencyfile))#load data
+frequency[1]
+ahead <- as.matrix(read.csv(aheadfile))#load data
+ahead[1]
+
+library("fpp2")
+data <- ts(data = y, frequency = convert_frequency(frequency[1]))#we transform it into a time-series
+autoplot(data)
+```
+
+Alessio Code
+
+```{r}
+ind =6
+name <- paste("./train/train_",ind,".csv",sep="")#time series train_6.csv
+y<- as.matrix(read.csv(name))#load data
+data <- ts(data = y, frequency = convert_frequency(frequency[ind]))#we transform it into a time-series
+autoplot(data)
+
+```
+
+Alessio Code
+
+```{r}
+ind = 6
+name <- paste("./train/train_",ind,".csv",sep="")#time series train1.csv
+y<- as.matrix(read.csv(name))#load data
+data <- ts(data = y, frequency = convert_frequency(frequency[ind]))#we transform it into a time-series
+model <- naive(data,h = ahead[ind])#we predict 6 steps ahead
+autoplot(model)
+```
+
+Alessio Code
+
+```{r}
+# we load the first time series
+ind=1 # index ts
+h = ahead[ind]  # forecast horizon
+name <- paste("./train/train_",ind,".csv",sep="")#time series train1.csv
+y <- as.matrix(read.csv(name))#load data
+data <- ts(data = y, frequency = convert_frequency(frequency[ind]))#we transform it into a time-series
+model <- naive(data,h)
+index = 1:h
+df <- cbind(index, as.matrix(model$mean) )#we save the predictions with the index
+df
+```
+
+## TBATS
+
+The below code contains the TBATS model which was uploaded to Kaggle, socring 546.99.
+
+```{r echo=TRUE}
+
+ind=1 # index ts
+h = ahead[ind]  # forecast horizon
+name <- paste("./train/train_",ind,".csv",sep="")#time series train1.csv
+y <- as.matrix(read.csv(name))#load data
+
+
+
+data <- ts(data = y, frequency = convert_frequency(frequency[ind]))#we 
+#transform it into a time-series
+model_tbats <- suppressWarnings(tbats(data,num.cores = 2,
+                use.damped.trend = TRUE,use.trend=TRUE))#model the ts using tbats
+      
+# Forecast using the fitted TBATS model
+forecast_tbats <- suppressWarnings(forecast(model_tbats, h = h))
+    
+index = 1:h
+df <- cbind(index, as.matrix(forecast_tbats$mean) )# add to dataframe 
+#predictions csv
+
+# Loop through remaining time series
+for (ind in 2:600) {
+  h = ahead[ind]
+  name <- paste("./train/train_", ind, ".csv", sep = "") # Load train_ind.csv
+  y <- as.matrix(read.csv(name)) # Load data
+  data <- ts(data = y, frequency = convert_frequency(frequency[ind])) # Convert to time-series
+
+  # Fit TBATS model for each time series
+  model <- suppressWarnings(tbats(data,num.cores = 2,
+                use.damped.trend = TRUE,use.trend=TRUE))
+  forecast_tbats <- suppressWarnings(forecast(model, h = h))
+  predictions <- as.matrix(forecast_tbats$mean)
+  
+  
+  # Save the forecast
+  index = 1:h
+  df <- rbind(df, cbind(as.integer(nrow(df) + index), predictions))
+  cat("Completed forecasting for time series", ind, "\n")  
+}
+
+ #Write the output to a CSV file for Kaggle
+ write.table(df, file = "my_prediction.csv", 
+             col.names = c("Id", "Predicted"),
+             sep = ",",
+             row.names = FALSE)
+
+```
+
+Next, we will observe how this optimal model was chosen. This is done by calculating the MAE of each time series, using training and test sets. To minimize the MAE, the params of the TBATS model were constantly changed, until I could no longer get a lower score. The lowest MAE model did not correlate with the lowest score model on Kaggle. The lowest MAE was achieved with no parameters.
+
+```{r echo=TRUE}
+
+#We make a data fram to hold the MAE of each timeseries
+mae_df_tbats_report <- data.frame(Id = integer(), MAE = numeric())
+
+
+ind=1 # index ts
+h = ahead[ind]  # forecast horizon
+name <- paste("./train/train_",ind,".csv",sep="")#time series train1.csv
+y <- as.matrix(read.csv(name))#load data
+
+#we introduce train and test data, used for cross validation
+train_length <- length(y) - h
+train_data <- y[1:train_length]  # First (n - h) values
+test_data <- y[(train_length + 1):length(y)] 
+
+# Convert the training data into ts
+data_train <- ts(data = train_data, frequency = convert_frequency(frequency[ind]))
+# Fit a TBATS model to the training data
+model_tbats <- suppressWarnings(tbats(data_train, num.cores = 2,
+                use.damped.trend = TRUE,use.trend=TRUE))
+      
+#Generate forecasts for the specified horizon (h) using the fitted TBATS model
+forecast_tbats <- suppressWarnings(forecast(model_tbats, h = h))
+
+
+#Calcluate the MAE
+mae_tbats <- mean(abs(test_data - forecast_tbats$mean))
+mae_df_tbats_report <- rbind(mae_df_tbats_report, data.frame(Id = ind, MAE = mae_tbats))
+    
+index = 1:h
+df <- cbind(index, as.matrix(forecast_tbats$mean) )#store results for CSV output
+
+# Loop through remaining time series
+for (ind in 2:600) {
+  h = ahead[ind]
+  name <- paste("./train/train_", ind, ".csv", sep = "") # Load train_ind.csv
+  y <- as.matrix(read.csv(name)) # Load data
+  
+  #we introduce train and test data, used for cross validation
+  train_length <- length(y) - h
+  train_data <- y[1:train_length]  # First (n - h) values
+  test_data <- y[(train_length + 1):length(y)]
+
+  # again convert the training data into ts
+  data_train <- ts(data = train_data, frequency = convert_frequency(frequency[ind]))
+  # Fit a TBATS model to the training data for each ts
+  model <- suppressWarnings(tbats(data_train,num.cores = 2,
+                use.damped.trend = TRUE,use.trend=TRUE))
+  #Generate forecasts using the fitted TBATS model for each ts
+  forecast_tbats <- suppressWarnings(forecast(model, h = h))
+  #store each prediction
+  predictions <- as.matrix(forecast_tbats$mean)
+  
+  #calc MAE for each ts
+  mae_tbats <- mean(abs(test_data - forecast_tbats$mean))
+  mae_df_tbats_report <- rbind(mae_df_tbats_report, data.frame(Id = ind, MAE = mae_tbats)) 
+  
+  # Save the forecast
+  index = 1:h
+  df <- rbind(df, cbind(as.integer(nrow(df) + index), predictions))
+  cat("Completed forecasting for time series", ind, "\n")  
+}
+
+#we now have a DF containing all the MAE
+#simply calculate the combined mean
+mean_MAE_tbats <- mean(mae_df_tbats_report$MAE)
+mean_MAE_tbats
+
+```
+
+We keep track mean_MAE_tbats from the above code; we monitor this value each time we change parameters, trying to minimise it. Here are some examples of the params I tried and their associated MAE's
+
+```{r echo=TRUE, results='Hide'}
+model_tbats_test <- suppressWarnings(tbats(data,num.cores = 2))
+#This actually gave the lowest MAE, however, was not the best scorer in Kaggle
+
+model_tbats_test <- suppressWarnings(tbats(data,num.cores = 2,
+                                           use.damped.trend = TRUE))
+#MAE = 747.08, gave a much worse Kaggle score
+#parameter allows the inclusion of a damped trend component, which models the trend to gradually level off over time rather than continuing indefinitely.
+
+model_tbats_test <- suppressWarnings(tbats(data,num.cores = 2,
+                                           use.trend = TRUE))
+#MAE = 758.32, also gave a bad kaggle score
+#parameter in the tbats function includes a trend component in the model, allowing it to capture long-term changes in the time series data over time.
+
+model <- suppressWarnings(tbats(data_train,num.cores = 2,
+                use.damped.trend = TRUE,use.trend=TRUE)) 
+#MAE = 537, gave the BEST kaggle score
+#combination of use.trend = TRUE and use.damped.trend = TRUE includes a long-term trend in the model that gradually levels off over time
+
+
+
+tbats(data_train_test, seasonal.periods())#Gave an Error!
+#This makes sense, as setting specific seasonal periods for 600 is difficult, and from the residual analysis we know some of the time series had no seasonality
+
+#We also did not use the param, biasadj, since we did not perform box-cox on the data
+
+```
+
+#### Residual Analysis
+
+This section analyzes the performance of the TBATS model by focusing on the time series with the three highest and three lowest Mean Absolute Error (MAE) values from the residual analysis. This is suitable since MAEs indicate the best/worst predictive performance, as the model's predictions closely align with the actual values for these datasets.
+
+```{r echo=TRUE}
+MAE_TBATS_Residual <- read.csv("MAE_TBATS_new.csv")
+
+highest_indices <- order(MAE_TBATS_Residual$MAE, decreasing = TRUE)[1:3]
+
+lowest_indices <- order(MAE_TBATS_Residual$MAE, decreasing = FALSE)[1:3]
+
+highest_indices[1]
+lowest_indices
+
+#highest ts first
+ind = highest_indices[1]
+name <- paste("./train/train_",ind,".csv",sep="")
+y <- as.matrix(read.csv(name))#load data
+data <- ts(data = y, frequency = convert_frequency(frequency[ind]))
+
+model <- suppressWarnings(tbats(data,num.cores = 2,
+                use.damped.trend = TRUE,use.trend=TRUE))
+checkresiduals(model) #residual check
+autoplot(data) #plot the time series
+
+library(forecast)
+
+# Create a seasonal plot
+ggseasonplot(data, main = "Seasonal Plot", year.labels = TRUE, year.labels.left = TRUE)
+```
+
+```{r}
+#second highest ts first
+ind = highest_indices[2]
+name <- paste("./train/train_",ind,".csv",sep="")
+y <- as.matrix(read.csv(name))#load data
+data <- ts(data = y, frequency = convert_frequency(frequency[ind]))
+
+model <- suppressWarnings(tbats(data,num.cores = 2,
+                use.damped.trend = TRUE,use.trend=TRUE))
+checkresiduals(model) #residual check
+autoplot(data) #plot the time series
+
+library(forecast)
+
+# Create a seasonal plot
+ggseasonplot(data, main = "Seasonal Plot", year.labels = TRUE, year.labels.left = TRUE)
+```
+
+```{r}
+#3rd highest
+ind = highest_indices[3]
+name <- paste("./train/train_",ind,".csv",sep="")
+y <- as.matrix(read.csv(name))#load data
+data <- ts(data = y, frequency = convert_frequency(frequency[ind]))
+
+model <- suppressWarnings(tbats(data,num.cores = 2,
+                use.damped.trend = TRUE,use.trend=TRUE))
+checkresiduals(model) #residual check
+autoplot(data) #plot the time series
+
+library(forecast)
+
+# Create a seasonal plot
+ggseasonplot(data, main = "Seasonal Plot", year.labels = TRUE, year.labels.left = TRUE)
+```
+
+Giving an overall review of the 3 best performing time series; In all, The ACF plots shows no significant autocorrelation at any lag, indicating that the residuals are white noise, which is desirable and suggests that the model has effectively captured the patterns in the data. The inability to generate seasonal plots for the best-performing time series suggests that these datasets lack inherent seasonality, which aligns with the TBATS model parameters excluding a seasonal component. This reinforces that the model is well-suited for capturing trends and other non-seasonal patterns in the data, and it indicates why incorporating seasonality was giving me errors
+
+Next, we look at the worst performing time series
+
+```{r}
+#lowest ts
+ind = lowest_indices[1]
+name <- paste("./train/train_",ind,".csv",sep="")
+y <- as.matrix(read.csv(name))#load data
+data <- ts(data = y, frequency = convert_frequency(frequency[ind]))
+
+model <- suppressWarnings(tbats(data,num.cores = 2,
+                use.damped.trend = TRUE,use.trend=TRUE))
+checkresiduals(model) #residual check
+autoplot(data) #plot the time series
+
+library(forecast)
+
+# Create a seasonal plot
+ggseasonplot(data, main = "Seasonal Plot", year.labels = TRUE, year.labels.left = TRUE)
+```
+
+```{r}
+#2nd lowest ts
+ind = lowest_indices[2]
+name <- paste("./train/train_",ind,".csv",sep="")
+y <- as.matrix(read.csv(name))#load data
+data <- ts(data = y, frequency = convert_frequency(frequency[ind]))
+
+model <- suppressWarnings(tbats(data,num.cores = 2,
+                use.damped.trend = TRUE,use.trend=TRUE))
+checkresiduals(model) #residual check
+autoplot(data) #plot the time series
+
+library(forecast)
+
+# Create a seasonal plot
+ggseasonplot(data, main = "Seasonal Plot", year.labels = TRUE, year.labels.left = TRUE)
+```
+
+```{r}
+#3rd lowest ts
+ind = lowest_indices[3]
+name <- paste("./train/train_",ind,".csv",sep="")
+y <- as.matrix(read.csv(name))#load data
+data <- ts(data = y, frequency = convert_frequency(frequency[ind]))
+
+model <- suppressWarnings(tbats(data,num.cores = 2,
+                use.damped.trend = TRUE,use.trend=TRUE))
+checkresiduals(model) #residual check
+autoplot(data) #plot the time series
+
+library(forecast)
+
+# Create a seasonal plot
+ggseasonplot(data, main = "Seasonal Plot", year.labels = TRUE, year.labels.left = TRUE)
+```
+
+The ACF plot shows how poorly the model has captured the patterns. This is not a surprise since the data is highly seasonal and my TBATS function has no seasonal param. The high seasonality of the data can be seen from the autplots and the seasonal plots.
+
+## Hannah you dont have to include the code from here on!
+
+```{r}
+#NO NEED TO INCLUDE HANNAH
+
+#NAIVE FOR REPORT
+
+mae_df_naive_report <- data.frame(Id = integer(), MAE_Naive = numeric())
+
+# we load the first time series
+ind=1 # index ts
+h = ahead[ind]  # forecast horizon
+name <- paste("./train/train_",ind,".csv",sep="")#time series train1.csv
+y <- as.matrix(read.csv(name))#load data
+
+
+
+train_length <- length(y) - h
+train_data <- y[1:train_length]  # First (n - h) values
+test_data <- y[(train_length + 1):length(y)]  # Last h values
+
+
+#model for training data
+data_train <- ts(data = train_data, frequency = convert_frequency(frequency[ind]))
+model <- naive(data_train, h = h)
+
+#MAE
+mae_naive <- mean(abs(test_data - model$mean))
+mae_df_naive_report <- rbind(mae_df_naive_report, data.frame(Id = ind, MAE_Naive = mae_naive))
+
+index = 1:h
+df <- cbind(index, as.matrix(model$mean) )#we save the predictions with the index
+for (ind in 2:600){
+  h = ahead[ind]
+  name <- paste("./train/train_",ind,".csv",sep="")#time series train_ind.csv
+  y<- as.matrix(read.csv(name))#load data
+  
+  train_length <- length(y) - h
+  train_data <- y[1:train_length]  # First (n - h) values
+  test_data <- y[(train_length + 1):length(y)]  # Last h values
+  
+  #model for training data
+  data_train <- ts(data = train_data, frequency = convert_frequency(frequency[ind]))
+  model <- naive(data_train, h = h)
+  
+  mae_naive <- mean(abs(test_data - model$mean))
+  mae_df_naive_report <- rbind(mae_df_naive_report, data.frame(Id = ind, MAE_Naive = mae_naive))
+  
+  index = 1:h
+  df<-rbind(df,cbind(as.integer(nrow(df)+index),predictions) )
+  
+}
+```
+
+```{r}
+##NO NEED TO INCLUDE HANNAH
+
+
+
+# Create a data frame with the modified ARIMAX value
+data <- data.frame(
+  Model = c("Naive", "TBATS", "TBATS (used in Kaggle)", "ARIMAX", "Polynomial", 
+            "Linear Regression", "Filtered Arima", "Filtered Arima Log", "Auto Arima"),
+  Mean_MAE = c(626.6126, 519.9091, 530.7106, 643.66, 976.0224, 
+               1003.5006, 557.2498, 540.3990, 606.3778)
+)
+
+# Print the data frame
+print(data)
+
+
+#xreg ARIMA MAE
+mae_df_ARIMAx_report <- read.csv("MAE_arima_Hannah.csv")
+
+mae_df_polynomial_report <- read.csv("polynomial_mae_values_only.csv", header = FALSE)
+
+mae_df_FilteredARIMALog_report <- read.csv("./ALL_mae/ALL_mae/filtered_arima_log_mae_values.csv", header=FALSE)
+
+mae_df_FilteredARIMA_report <- read.csv("./ALL_mae/ALL_mae/filtered_arima_mae_values.csv", header=FALSE)
+
+mae_df_AutoARIMA_report <- read.csv("./ALL_mae/ALL_mae/filtered_auto_arima_mae_values.csv", header=FALSE)
+
+mae_df_Regression_report <- read.csv("./ALL_mae/ALL_mae/MAE_regression_linear.csv", header=FALSE)
+
+
+
+#Calculating the MAE
+mean_MAE_naive <- mean(mae_df_naive_report$MAE_Naive)
+mean_MAE_tbats <- mean(mae_df_tbats_report$MAE)
+mean_MAE_ARIMAx <- mean(mae_df_ARIMAx_report$MAE)
+
+mean_MAE_polynomial <- mean(mae_df_polynomial_report$V1)
+mean_MAE_FilteredARIMALog <- mean(mae_df_FilteredARIMALog_report$V1)
+mean_MAE_FilteredARIMA <- mean(mae_df_FilteredARIMA_report$V1)
+mean_MAE_AutoARIMA <- mean(mae_df_AutoARIMA_report$V1)
+mean_MAE_Regression <- mean(mae_df_Regression_report$V1)
+
+
+write.csv(mae_df_naive_report, "MAE_TBATS.csv", row.names = FALSE)
+
+mean_MAE_naive 
+mean_MAE_tbats
+mean_MAE_ARIMAx
+
+#combining
+MAE_tracker_report <- cbind(mae_df_naive_report,MAE_tbats = mae_df_tbats_report$MAE,
+                            MAE_ARIMAx = mae_df_ARIMAx_report$MAE)
+MAE_tracker_report$Method <- NA 
+
+for (i in 1:nrow(MAE_tracker_report)) {
+  if (MAE_tracker_report[i, 2] <= MAE_tracker_report[i, 3]) {
+    MAE_tracker_report$Method[i] <- "NAIVE"
+  } else {
+    MAE_tracker_report$Method[i] <- "TBATS"
+  }
+}
+
+
+
+
+mae_summary_report <- data.frame(
+  Model = c("Naive", "TBATS","TBATS (used in Kaggle)" ,"ARIMAX","Polynomial","Linear Regression","Filtered Arima", "Filtered Arima Log", "Auto Arima" ),
+  Mean_MAE = c(mean_MAE_naive, mean_MAE_tbats, 530.7106, mean_MAE_ARIMAx,mean_MAE_polynomial,
+               mean_MAE_Regression, mean_MAE_FilteredARIMA,mean_MAE_FilteredARIMALog,
+               mean_MAE_AutoARIMA)
+)
+
+# Print the table
+print(mae_summary_report)
+
+```
