@@ -1,6 +1,6 @@
-# Exploring Quantitative Finance & Machine Learning
+# Exploring Quantitative Finance & Machine Learning and Forecasting
 
-## This personal repository reflects my curiosity and self-driven learning in quantitative finance, statistical modeling, and machine learning. It contains projects I’ve built to deepen my understanding of financial markets, develop practical coding skills, and experiment with supervised learning techniques.
+## This personal repository reflects my curiosity and self-driven learning in quantitative finance, statistical modeling, and machine learning. It contains projects I’ve built to deepen my understanding of financial markets, develop practical coding skills, and experiment with supervised learning and forecasting techniques.
 #### I also wanted to improve my python skills. In college, we almost exclusively use R, so while I had a lot of the theory (stats and maths), I needed to brush up and improve my python for a lot of these scripts.
 
 ### What’s inside:
@@ -12,5 +12,7 @@
 **Statistical Modeling** – Using regression analysis **(scikit-learn)** to investigate how market indicators relate to future price movements.
 
 **Data Retrieval & Visualization** – Automated data collection using **yfinance** with visualizations for clearer interpretation.
+
+**Time Series Forecasting (R)** – Large-scale forecasting of hundreds of monthly series using ARIMA, ETS, and time series linear models (TSLM) with Fourier terms to capture complex seasonality. Includes cross-validation and evaluation with RMSE/MAE to benchmark forecast accuracy.
 
 I’m doing this to experiment, improve my skills, and bridge my interests in finance, data science, and machine learning.
